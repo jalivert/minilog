@@ -106,3 +106,7 @@ The goal of the project is not to be a rigorous introduction into the matter! At
 4) When presented with a result, you either write `:next` and hit enter (to backtrack) or you write `:done` and hit enter to conclude the computation.
 
 5) When you want to quit the REPL, you submit `:q` or `:Q`.
+
+## How can you run the tests?
+
+1) Run `cabal test`.

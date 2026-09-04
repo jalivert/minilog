@@ -1,6 +1,6 @@
 module Main where
 
-import Data.List ( foldl', intercalate )
+import Data.List ( intercalate )
 import Data.List.Extra ( trim )
 
 import Data.Map.Strict qualified as Map
