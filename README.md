@@ -1,5 +1,7 @@
 # Minilog
 
+[![Haskell CI](https://github.com/jalivert/minilog/actions/workflows/haskell.yml/badge.svg)](https://github.com/jalivert/minilog/actions/workflows/haskell.yml)
+
 Minilog is a very small programming language implementation.
 It's goal is to capture the essence of logic programming.
 
