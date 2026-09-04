@@ -2,27 +2,33 @@ module EvalSpec (spec) where
 
 import Test.Hspec (Spec, describe, it, shouldBe, shouldSatisfy)
 
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 
-import Evaluate.State (Action (..), State (..))
-import Evaluate.Step (step)
-import Term (Struct (..), Term (..))
+import Evaluate.State (Processing (..), Stalled (..), StepResult (..))
+import Evaluate.Step (resume, step)
+import Term (Goal (..), Struct (..), Term (..))
 
 import EvalHelp (collectN, mkState, mustBase, mustQuery, solutionsOf)
 
 
-isSearching :: Action State -> Bool
+isSearching :: StepResult -> Bool
 isSearching (Searching _) = True
 isSearching _ = False
 
 
-isSucceeded :: Action State -> Bool
-isSucceeded (Succeeded _) = True
-isSucceeded _ = False
+isSolved :: StepResult -> Bool
+isSolved (Solved _ _) = True
+isSolved _ = False
 
 
-requireSearching :: Action State -> IO State
-requireSearching (Searching s) = return s
+isDeadEnd :: StepResult -> Bool
+isDeadEnd (DeadEnd _) = True
+isDeadEnd _ = False
+
+
+requireSearching :: StepResult -> IO Processing
+requireSearching (Searching p) = return p
 requireSearching other = fail ("expected Searching, got: " ++ show other)
 
 
@@ -45,27 +51,38 @@ factorialBase =
 spec :: Spec
 spec = do
   describe "single step transitions" $ do
-    it "is Done when both stacks are empty" $
-      step State{ base = []
-                , query'vars = Map.empty
-                , backtracking'stack = []
-                , goal'stack = []
-                , position = 0
-                , counter = 0 }
-        `shouldBe` Done
+    it "resume reports Nothing when no records remain" $
+      resume Stalled{ base'stalled = []
+                    , backtracking'stack'stalled = []
+                    , counter'stalled = 0 }
+        `shouldBe` Nothing
 
-    it "is Failed when a goal matches nothing and no backtracking remains" $ do
+    it "resume restores the top record" $
+      let goals = Call Struct{ name = "p", args = [Var "X"] } :| []
+          stalled = Stalled{ base'stalled = mustBase "p(a)."
+                           , backtracking'stack'stalled =
+                               [(goals, 1, Map.fromList [("X", Var "X")])]
+                           , counter'stalled = 0 }
+      in resume stalled
+           `shouldBe` Just Processing{ base = mustBase "p(a)."
+                                     , query'vars = Map.fromList [("X", Var "X")]
+                                     , backtracking'stack = []
+                                     , goal'stack = goals
+                                     , position = 1
+                                     , counter = 0 }
+
+    it "is DeadEnd when a goal matches nothing and no backtracking remains" $ do
       let st = mkState [] (mustQuery "p(a).")
-      step st `shouldBe` Failed
+      step st `shouldSatisfy` isDeadEnd
 
     it "is Searching after matching a fact" $
       let st = mkState (mustBase "p(a).") (mustQuery "p(a).")
       in step st `shouldSatisfy` isSearching
 
-    it "is Succeeded at once for a zero-arity fact" $
+    it "reports Solved at once for a zero-arity fact" $
       -- No unification goals remain, so there is nothing to search.
       let st = mkState (mustBase "raining.") (mustQuery "raining.")
-      in step st `shouldSatisfy` isSucceeded
+      in step st `shouldSatisfy` isSolved
 
   describe "facts" $ do
     it "proves a ground fact" $
@@ -133,21 +150,21 @@ spec = do
         `shouldBe` ([], True)
 
   describe "backtracking protocol" $ do
-    it "offers Redoing while choicepoints remain" $ do
+    it "keeps choicepoints for later solutions" $ do
       let st = mkState (mustBase "p(a). p(b).") (mustQuery "p(X).")
           (sols, _done) = collectN 1000 1 st
       sols `shouldBe` [Map.fromList [("X", Atom "a")]]
 
-    it "reports Done after the last solution" $
+    it "reports completion after the last solution" $
       solutionsOf "p(a)." "p(X)."
         `shouldBe` ([Map.fromList [("X", Atom "a")]], True)
 
-    it "walks Searching, Succeeded for a one-fact query" $ do
+    it "walks Searching, Solved for a one-fact query" $ do
       -- Unifying the last goal empties the goal stack, so the second
-      -- step succeeds outright instead of searching further.
+      -- step solves outright instead of searching further.
       let st = mkState (mustBase "p(a).") (mustQuery "p(X).")
       st1 <- requireSearching (step st)
-      step st1 `shouldSatisfy` isSucceeded
+      step st1 `shouldSatisfy` isSolved
 
   describe "Peano arithmetic (factorial.pl)" $ do
     it "proves a ground addition" $

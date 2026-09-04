@@ -29,6 +29,10 @@ minilog :-
 
 $space+                 ;
 
+-- Identifiers are deliberately single-case runs: `foo` is an atom and
+-- `FOO` is a variable, so something like `fOo` lexes as three separate
+-- tokens. A `%` comment runs to the end of the line (or the end of input).
+
 "%".*                   ;
 
 ","                     { \_ -> token Token.Comma }

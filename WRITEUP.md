@@ -267,15 +267,22 @@ Term    :=  Var
         |   Struct
         |   '_'
 
-Var     :=  [A-Z]([A-Z][a-z])*
+Var     :=  [A-Z]+
 
-Atom    :=  [a-z]([A-Z][a-z])*
+Atom    :=  [a-z]+
 
-Struct  :=  Atom '(' Terms ')'
+Struct  :=  Atom
+        |   Atom '(' Terms ')'
 
 Terms   :=  Term
         |   Term ',' Terms
 ```
+
+A bare atom in the position of a predicate or a goal is a struct with
+no arguments, so `raining.` is a fact and `raining` is a goal calling
+it. Inside an argument list a bare atom is simply a term.
+(Identifiers are deliberately single-case runs: `foo` is an atom, `FOO`
+is a variable, and something like `fOo` lexes as three separate tokens.)
 
 ----
 
@@ -459,20 +466,50 @@ Thanks to that, the presentation is just a matter of printing all the mappings.
 
 ----
 
-All of this leads to the following Haskell data structure:
+All of this leads to the following Haskell data structures.
+The search is either still running, with goals left to prove:
+
 ```haskell
-data State
-  = State { base                :: [Predicate]
+data Processing
+  = Processing { base                :: [Predicate]
 
-          , position            :: Int
-          , goal'stack          :: [Goal]
-          , backtracking'stack  :: [([Goal], Int, Query'Mapping)]
+               , position            :: Int
+               , goal'stack          :: NonEmpty Goal
+               , backtracking'stack  :: [(NonEmpty Goal, Int, Query'Mapping)]
 
-          , counter             :: Int
-          , query'vars          :: Query'Mapping }
+               , counter             :: Int
+               , query'vars          :: Query'Mapping }
 
 type Query'Mapping = Map.Map String Term
 ```
+
+Note that the goal stack can never be empty: a machine that is still
+running always has something left to prove. When the last goal is
+discharged, the machine instead stalls - it keeps everything above
+except the goal stack itself:
+
+```haskell
+data Stalled
+  = Stalled { base'stalled               :: [Predicate]
+            , backtracking'stack'stalled :: [(NonEmpty Goal, Int, Query'Mapping)]
+            , counter'stalled            :: Int }
+```
+
+A single step of a running machine then answers with one of:
+
+```haskell
+data StepResult
+  = Searching Processing
+  | Solved Query'Mapping Stalled
+  | DeadEnd Stalled
+```
+
+`Searching` means what it says. `Solved` carries the solution (the
+query variables with their assigned terms) together with the stalled
+rest of the search. `DeadEnd` means the current path cannot continue,
+again with the stalled rest attached. There is deliberately no "done":
+whether a stalled search is over is decided by resuming it (see below),
+not by stepping.
 
 ----
 
@@ -487,20 +524,24 @@ It is split in two parts, one for unification and one for a single step of the m
 Here is what the algorithm does on every step:
 
 ```
-machine state MS consists of:
-- a goal stack GS
+processing state PS consists of:
+- a non-empty goal stack GS
 - a base B
 - a position of some predicate in base P
 - a backtracking stack BS
 
-Each step is given a machine state MS and is expected to return a machine state MS'.
+Each step is given a processing state PS and answers with one of:
+- Searching PS' - goals remain, keep stepping
+- Solved SUB ST - the stack just ran out; SUB maps the query variables
+  to their assigned terms and ST is the stalled rest of the search
+- DeadEnd ST - the current path cannot continue; ST is the stalled rest
 ```
 
 ```
 on each step do:
-  - inspect the goal stack GS:
+  - inspect the goal on top of the goal stack GS:
 
-    - on top of the goal stack GS there is a goal G to invoke a predicate, then:
+    - a goal G invoking a predicate, then:
 
       - starting at the position P, search the base for the first predicate with the same name and arity as G; if:
         - we find one, then:
@@ -509,52 +550,57 @@ on each step do:
               - pop the goal G
               - set the position P to 0
               - rename all the variables in F to unique names, obtaining F_RENAMED
-              - create a new goal NG being (G = F1_RENAMED)
-              - push NG on top of the goal stack.
-                    
+              - create a new goal NG being (G = F_RENAMED)
+              - if any goals remain (NG plus the rest of GS), keep searching with them
+              - if no goals remain (a fact with no arguments discharged the last goal), report Solved
 
             - a rule R at the position P_CURRENT, then:
               - pop the goal G
               - set the position P to 0
               - rename all the variables in the R to unique names, obtaining R_RENAMED
-              - push each sub-goal in the body of the R_RENAMED on top of the goal stack (first sub-goal in the body goes last)
               - create a new goal NG being (G = H_RENAMED) where H_RENAMED is the head of the R_RENAMED
-              - push NG on top of the goal stack
+              - push NG on top of the goal stack, followed by each sub-goal in the body of the R_RENAMED (first sub-goal in the body goes last)
+              - keep searching (a rule body is never empty, so goals always remain)
 
           - search the base for the next predicate after P_CURRENT, with the same name and arity as G; if:
             - there is one at the position P_NEXT, then:
               - create a backtracking record BR consisting of the original goal stack GS and a position P_NEXT
               - push BR on top of the backtracking stack BS
-          
+
             - there is none, then we do not change the backtracking stack BS
 
         - there is no fitting predicate; then:
-          - we attempt backtracking
+          - the path is a DeadEnd
 
-    - on top of the goal stack GS there is a goal G to unify two terms; then:
+    - a goal G unifying two terms; then:
       - we use the unification algorithm described below, it results in:
 
         - a success - it produces a substitution/mapping SUB from variables to terms and a goal stack GS_UNIF, we do:
           - apply SUB to GS obtaining a new goal stack GS_SUBSTITUTED
           - concatenate GS_UNIF with GS_SUBSTITUTED obtaining GS_NEW
-          - we set GS to GS_NEW
+          - if GS_NEW is empty, report Solved; otherwise keep searching with GS_NEW
 
-        - a failure - then we attempt backtracking
+        - a failure - then the path is a DeadEnd
+```
 
-    - the goal stack GS is empty; we attempt backtracking.
-
-
-to attempt backtracking:
-  inspect the backtracking stack BS:
+```
+to resume a stalled search ST:
+  inspect the backtracking stack BS in ST:
 
     - on top of the backtracking stack BS there is a backtracking record BR; then:
-      - set the position to the P_NEXT from the record BR
-      - set the goal stack to the GS from the record BR
-      - run a step of the computation
+      - restore the goal stack GS, the position P_NEXT and the variable mapping from BR
+      - keep searching
 
     - the backtracking stack BS is empty; then:
-      - we fail
+      - the search is done
 ```
+
+The driver (the REPL, in our implementation) loops over these two
+functions: it steps until the machine stalls with a solution (which it
+reports) or a dead end (which it silently resumes from), and it resumes
+until nothing remains to try. A `Solved` whose backtracking stack is
+empty is the last solution; a `DeadEnd` whose backtracking stack is
+empty is a failure.
 
 The algorithm above omits two small details. It does not concern itself with the details of renaming predicates or how should we ensure that we always use a new name. The reader is expected to fill in that themself. The second detail omited is the aforementioned mapping from variables of the original query to the terms to-them-assigned. This is also trivial and should not be a problem for the reader.
 

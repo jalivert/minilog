@@ -14,6 +14,11 @@ import Lexer
 
 import Term
 
+
+-- | The grammar turns tokens into `Term` values. Two things worth
+-- noticing: a knowledge base may be empty, and a bare atom in predicate
+-- or goal position is a struct with no arguments (see `bare'struct`).
+
 }
 
 

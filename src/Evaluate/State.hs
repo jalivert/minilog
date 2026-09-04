@@ -1,44 +1,57 @@
 module Evaluate.State where
 
+import Data.List.NonEmpty ( NonEmpty )
 import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
 
 import Term ( Goal, Term, Predicate )
 
 
-{-  The Action data structure is there
-    to signalize what happened in the last step -}
-data Action a = Succeeded !a
-              | Failed
-              | Searching !a
-              | Redoing !a
-              | Done
+{-  The search is either still running (with goals to prove) or stalled
+    (with the goal stack empty). The two shapes are distinct types, so
+    `step` only ever sees a non-empty goal stack and the "what now?"
+    bookkeeping lives in `resume` instead of in the caller's head. -}
+
+-- | The search is still under way: goals remain to be proved.
+data Processing = Processing
+  { base :: ![Predicate] -- knowledge base
+  , query'vars :: !(Map.Map String Term)  -- the variables from the query
+  , backtracking'stack :: ![(NonEmpty Goal, Int, Map.Map String Term)]
+    -- a stack of things to try when the current
+    -- goal fails or succeeds
+
+  , goal'stack :: !(NonEmpty Goal)  -- goals to satisfy
+  , position :: !Int -- position in the base
+
+  , counter :: !Int } -- for renaming variables
   deriving (Eq, Show)
 
 
-data State
-  = State { base :: ![Predicate] -- knowledge base
-          , query'vars :: !(Map.Map String Term)  -- the variables from the query
-          , backtracking'stack :: ![([Goal], Int, Map.Map String Term)]
-            -- a stack of things to try when the current
-            -- goal fails or succeeds
-
-          , goal'stack :: ![Goal]  -- goals to satisfy
-          , position :: !Int -- position in the base
-
-          , counter :: !Int } -- for renaming variables
+-- | The goal stack ran out. Holds everything the search needs to pick
+-- up from the backtracking stack, if anything remains to try.
+data Stalled = Stalled
+  { base'stalled :: ![Predicate]
+  , backtracking'stack'stalled :: ![(NonEmpty Goal, Int, Map.Map String Term)]
+  , counter'stalled :: !Int }
   deriving (Eq, Show)
 
 
--- TODO: A new state representation that encodes:
--- Processing a current goal'stack
--- Succeeded - does not contain the goal'stack (I think)
--- Failed - does not contain the goal'stack (might be interesting to think about how to represent what failed and why)
--- 
--- The main idea is that there is no Redoing and Done
--- and also the goal'stack is NonEmpty
--- this eliminates the need foor those two equations in `step`
--- because this book keeping will be done in a different function
--- a function that takes a state like Succeeded, one that does not contain a goal'stack
--- and either populates the goal'stack for Processing/Searching or decides that it is Done.
--- This seems like more sensible approach.
+-- | The outcome of a single step: more work, a solution, or a dead end.
+-- There is deliberately no "done" here: whether a stalled search is
+-- over is decided by `resume`, not by `step`.
+data StepResult
+  = Searching !Processing
+  | Solved !(Map.Map String Term) !Stalled
+  | DeadEnd !Stalled
+  deriving (Eq, Show)
+
+
+{-  A whole search is just a loop over the two functions in
+    `Evaluate.Step`:
+
+      drive proc = case step proc of
+        Searching proc' -> drive proc'
+        DeadEnd stalled -> case resume stalled of
+          Nothing    -> failed (nothing remains to try)
+          Just proc' -> drive proc'
+        Solved bindings stalled -> report bindings, then resume like above
+-}

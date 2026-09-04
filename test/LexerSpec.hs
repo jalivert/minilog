@@ -42,6 +42,10 @@ spec = do
     it "lexes _ as Underscore" $
       lexAll "_" `shouldBe` Right [Token.Underscore, Token.EOF]
 
+    it "lexes mixed-case runs as separate tokens" $
+      lexAll "fOo"
+        `shouldBe` Right [Token.Atom "f", Token.Var "O", Token.Atom "o", Token.EOF]
+
     it "skips whitespace including newlines" $
       lexAll "  foo\n\tbar "
         `shouldBe` Right [Token.Atom "foo", Token.Atom "bar", Token.EOF]

@@ -1,77 +1,58 @@
 module Evaluate.Step where
 
-import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
 import Data.List ( mapAccumL )
+import Data.List.NonEmpty ( NonEmpty(..) )
+import Data.Map.Strict qualified as Map
 
 
-import Evaluate.State ( State(..), Action(..) )
+import Evaluate.State ( Processing(..), Stalled(..), StepResult(..) )
 
 import Term ( Predicate(..), Struct(..), Term(..), Goal(..) )
 
 
-step :: State -> Action State
--- In these two equations we handle the situation
--- when in the previous step we have successfully proved the whole goal
--- that leaves us with an empty goal'stack.
--- These two equations handle the situation when no backtracking can happen (empty backtracking'stack)
--- or if some backtracking can happen (Redoing).
--- It's not ideal as the idea that the Action transitions from Succeede to either Done or Redoing is only in our heads.
--- It would be much better if it could be encoded in the design so that the type system and pattern matching
--- exhaustivity checker would have our backs, but it is what it is.
-step state@State{ backtracking'stack = []
-                , goal'stack = [] }
-  = Done
-
-step state@State{ backtracking'stack = record : backtracking'stack
-                , goal'stack = [] }
-  = Redoing state'
-  where (new'goal'stack, pos, q'vars) = record
-        state' = state{ goal'stack = new'goal'stack
-                      , position = pos
-                      , query'vars = q'vars
-                      , backtracking'stack }
-
+-- | One step of a running search. Only the goal on top of the stack
+-- is examined:
+--   * a predicate call looks for a matching fact or rule in the base,
+--     renames its variables to fresh ones (so separate uses never clash),
+--     remembers where to keep looking (the backtracking record), and turns
+--     the match into unification goals in front of the remaining goals;
+--   * a unification either substitutes a variable everywhere and carries
+--     on, or kills the current path (`DeadEnd`).
+-- When no goals are left behind, the solution is reported (`Solved`).
+step :: Processing -> StepResult
 {-  PROVE CALL  -}
-step state@State{ base
-                , backtracking'stack
-                , goal'stack = gs@(Call (f@Struct{ name, args }) : goal'stack)
-                , position
-                , query'vars
-                , counter }
+step proc@Processing{ base
+                    , backtracking'stack
+                    , goal'stack = whole@((Call (f@Struct{ name, args })) :| goals)
+                    , position
+                    , query'vars
+                    , counter }
   = case look'for f (drop position base) position of
-      Nothing -> fail'and'backtrack state
+      Nothing -> DeadEnd (stall proc)
 
       Just (Fact (Struct{ args = patterns }), the'position) ->
         let (counter', patterns') = rename'all patterns counter
-            goals = map (uncurry Unify) (zip args patterns')
-            new'goal'stack = goals ++ goal'stack
+            new'goals = map (uncurry Unify) (zip args patterns') ++ goals
 
-            backtracking'stack' = cause'backtracking f base (the'position + 1) gs query'vars backtracking'stack
+            backtracking'stack' = cause'backtracking f base (the'position + 1) whole query'vars backtracking'stack
 
-            new'state =  state{ backtracking'stack = backtracking'stack'
-                              , goal'stack = new'goal'stack
-                              , position = 0  -- the current goal will never ever be tried again (in this goal'stack anyway)
-                              , counter = counter' }
+            proc' = proc{ backtracking'stack = backtracking'stack'
+                        , position = 0  -- the current goal will never ever be tried again (in this goal'stack anyway)
+                        , counter = counter' }
 
-        -- A zero-arity fact leaves no unification goals behind, so the
-        -- new goal stack can already be empty; route through `succeed`
-        -- so that case is reported as `Succeeded`, not skipped over.
-        in  succeed new'state
+        in  settle proc' new'goals
 
       Just (Struct{ args = patterns } :- body, the'position) ->
         let (counter', patterns', body') = rename'both patterns body counter
-            head'goals = map (uncurry Unify) (zip args patterns')
-            new'goal'stack = head'goals ++ body' ++ goal'stack
+            new'goals = map (uncurry Unify) (zip args patterns') ++ body' ++ goals
 
-            backtracking'stack' = cause'backtracking f base (the'position + 1) gs query'vars backtracking'stack
+            backtracking'stack' = cause'backtracking f base (the'position + 1) whole query'vars backtracking'stack
 
-            new'state =  state{ backtracking'stack = backtracking'stack'
-                              , goal'stack = new'goal'stack
-                              , position = 0  -- the current goal will never ever be tried again
-                              , counter = counter' }
+            proc' = proc{ backtracking'stack = backtracking'stack'
+                        , position = 0  -- the current goal will never ever be tried again
+                        , counter = counter' }
 
-        in  succeed new'state
+        in  settle proc' new'goals
 
   where look'for :: Struct -> [Predicate] -> Int -> Maybe (Predicate, Int)
         look'for _ [] _ = Nothing
@@ -86,7 +67,10 @@ step state@State{ base
           | otherwise = look'for f base (pos + 1)
 
 
-        cause'backtracking :: Struct -> [Predicate] -> Int -> [Goal] -> Map.Map String Term -> [([Goal], Int, Map.Map String Term)] -> [([Goal], Int, Map.Map String Term)]
+        -- Remember the current goal stack in case the match we just took
+        -- leads nowhere - but only if another matching predicate exists
+        -- further down the base.
+        cause'backtracking :: Struct -> [Predicate] -> Int -> NonEmpty Goal -> Map.Map String Term -> [(NonEmpty Goal, Int, Map.Map String Term)] -> [(NonEmpty Goal, Int, Map.Map String Term)]
         cause'backtracking f base position goal'stack q'vars backtracking'stack
           = case look'for f (drop position base) position of
               Nothing -> backtracking'stack
@@ -95,47 +79,58 @@ step state@State{ base
                 in  backtracking'record : backtracking'stack
 
 {-  PROVE UNIFICATION -}
-step state@State{ base
-                , backtracking'stack
-                , goal'stack = Unify value'l value'r : goal'stack
-                , position
-                , query'vars
-                , counter }
-  = case unify (value'l, value'r) goal'stack query'vars of
+step proc@Processing{ goal'stack = (Unify value'l value'r) :| goals
+                    , query'vars }
+  = case unify (value'l, value'r) goals query'vars of
       Nothing ->
         -- could not unify
-        -- this means that this goal, fails
-        fail'and'backtrack state
-      Just (new'goal'stack, new'query'vars) ->
+        -- this means that this goal fails
+        DeadEnd (stall proc)
+      Just (goals', query'vars') ->
         -- they can be unified and the new'environment reflects that
         -- just return a new state with stack and env changed
-        succeed state { goal'stack = new'goal'stack, query'vars = new'query'vars }
+        settle proc{ query'vars = query'vars' } goals'
 
 
-succeed :: State -> Action State
-succeed state@State{ goal'stack = [] }
-  = Succeeded state
+-- | Keep searching with a new goal list, or report a solution when none
+-- remain. This is the only place an emptied goal stack turns into a
+-- `Solved`: the stack type guarantees we only get here with something
+-- that was just proved.
+settle :: Processing -> [Goal] -> StepResult
+settle proc [] = Solved (query'vars proc) (stall proc)
+settle proc (goal : goals) = Searching proc{ goal'stack = goal :| goals }
 
-succeed state
-  = Searching state
 
-
--- The following function fails the current goal.
--- It needs to replace the current goal'stack with a top of the backtracking one.
--- That means re-setting the position and the environment.
+-- | The current path cannot continue: package up the resume context so
+-- that `resume` can pick the search back up (or conclude it).
 -- The counter stays the same (because it only increments).
-fail'and'backtrack :: State -> Action State
-fail'and'backtrack state@State{ backtracking'stack = [] }
-  = Failed
-
-fail'and'backtrack state@State{ backtracking'stack = backtrack'record : backtracking'stack }
-  = step state{ backtracking'stack
-              , goal'stack = new'goal'stack
-              , position = pos
-              , query'vars = q'vars }
-  where (new'goal'stack, pos, q'vars) = backtrack'record
+stall :: Processing -> Stalled
+stall Processing{ base, backtracking'stack, counter } =
+  Stalled{ base'stalled = base
+         , backtracking'stack'stalled = backtracking'stack
+         , counter'stalled = counter }
 
 
+-- | Pick a stalled search back up from its top backtracking record.
+-- `Nothing` means nothing remains to try: the search is done.
+resume :: Stalled -> Maybe Processing
+resume Stalled{ base'stalled = base
+              , backtracking'stack'stalled = records
+              , counter'stalled = counter } =
+  case records of
+    [] -> Nothing
+    (goals, pos, q'vars) : rest ->
+      Just Processing{ base
+                     , query'vars = q'vars
+                     , backtracking'stack = rest
+                     , goal'stack = goals
+                     , position = pos
+                     , counter }
+
+
+-- | Give every distinct variable a fresh name; repeats of the same
+-- variable share the new name. The counter only moves forward, so names
+-- are never reused.
 rename'all :: [Term] -> Int -> (Int, [Term])
 rename'all patterns counter = (counter', patterns')
   where
@@ -159,6 +154,8 @@ rename'val acc val
   = (acc, val)
 
 
+-- | Rename a rule head and its body together, so that a variable shared
+-- between them stays shared after the renaming.
 rename'both :: [Term] -> [Goal] -> Int -> (Int, [Term], [Goal])
 rename'both patterns goals counter = (counter', patterns', goals')
   where
@@ -178,6 +175,10 @@ rename'goal state (Unify val'l val'r)
     in  (state', Unify val'l' val'r')
 
 
+-- | Unification in the style of Martelli and Montanari (see the write-up).
+-- Each equation below handles one shape of the pair; a variable facing a
+-- term it does not occur in becomes a substitution applied to every goal
+-- that is still waiting (and to the recorded query bindings).
 unify :: (Term, Term) -> [Goal] -> Map.Map String Term -> Maybe ([Goal], Map.Map String Term)
 {-  DELETE  (basically) -}
 unify (Wildcard, _) goals query'vars = Just (goals, query'vars)
@@ -232,6 +233,9 @@ unify (value, Var b) goals query'vars = unify (Var b, value) goals query'vars
 unify _ _ _ = Nothing   -- CONFLICT (for atoms and structs)
 
 
+-- | True when the variable appears anywhere inside the term. Binding a
+-- variable to such a term would build an infinite term, so the
+-- corresponding unification is rejected instead.
 occurs :: String -> Term -> Bool
 occurs var'name (Var name) = var'name == name
 occurs var'name (Atom _) = False

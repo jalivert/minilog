@@ -3,6 +3,12 @@ module Term where
 import Data.List ( intercalate )
 
 
+-- | The syntactic forms of Minilog. In short: a `Term` is anything that
+-- can sit inside a struct, a `Goal` is anything we can try to prove, and
+-- a `Predicate` is one entry of the knowledge base (a fact or a rule).
+-- The `Show` instances print everything back in Prolog syntax.
+
+
 data Goal = Call !Struct
           | Unify !Term !Term
   deriving (Eq)
