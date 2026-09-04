@@ -23,7 +23,7 @@ step :: Processing -> StepResult
 {-  PROVE CALL  -}
 step proc@Processing{ base
                     , backtracking'stack
-                    , goal'stack = whole@((Call (f@Struct{ name, args })) :| goals)
+                    , goal'stack = whole@((Call (f@Struct{ args })) :| goals)
                     , position
                     , query'vars
                     , counter }
@@ -32,7 +32,9 @@ step proc@Processing{ base
 
       Just (Fact (Struct{ args = patterns }), the'position) ->
         let (counter', patterns') = rename'all patterns counter
-            new'goals = map (uncurry Unify) (zip args patterns') ++ goals
+            -- `look'for` above only matches on equal arity, so the
+            -- pairwise pairing below is total.
+            new'goals = zipWith Unify args patterns' ++ goals
 
             backtracking'stack' = cause'backtracking f base (the'position + 1) whole query'vars backtracking'stack
 
@@ -44,7 +46,7 @@ step proc@Processing{ base
 
       Just (Struct{ args = patterns } :- body, the'position) ->
         let (counter', patterns', body') = rename'both patterns body counter
-            new'goals = map (uncurry Unify) (zip args patterns') ++ body' ++ goals
+            new'goals = zipWith Unify args patterns' ++ body' ++ goals
 
             backtracking'stack' = cause'backtracking f base (the'position + 1) whole query'vars backtracking'stack
 
@@ -53,30 +55,6 @@ step proc@Processing{ base
                         , counter = counter' }
 
         in  settle proc' new'goals
-
-  where look'for :: Struct -> [Predicate] -> Int -> Maybe (Predicate, Int)
-        look'for _ [] _ = Nothing
-        -- a fact with the same name and arity
-        look'for f@Struct{ name, args } (fact@(Fact (Struct{ name = name', args = args' })) : base) pos
-          | name == name' && length args == length args' = Just (fact, pos)
-          | otherwise = look'for f base (pos + 1)
-        -- | Struct :- Term
-        -- a rule with the same name and arity
-        look'for f@Struct{ name, args } (rule@(Struct{ name = name', args = args' } :- body) : base) pos
-          | name == name' && length args == length args' = Just (rule, pos)
-          | otherwise = look'for f base (pos + 1)
-
-
-        -- Remember the current goal stack in case the match we just took
-        -- leads nowhere - but only if another matching predicate exists
-        -- further down the base.
-        cause'backtracking :: Struct -> [Predicate] -> Int -> NonEmpty Goal -> Map.Map String Term -> [(NonEmpty Goal, Int, Map.Map String Term)] -> [(NonEmpty Goal, Int, Map.Map String Term)]
-        cause'backtracking f base position goal'stack q'vars backtracking'stack
-          = case look'for f (drop position base) position of
-              Nothing -> backtracking'stack
-              Just (_, future'position) ->
-                let backtracking'record = (goal'stack, future'position, q'vars)
-                in  backtracking'record : backtracking'stack
 
 {-  PROVE UNIFICATION -}
 step proc@Processing{ goal'stack = (Unify value'l value'r) :| goals
@@ -91,6 +69,32 @@ step proc@Processing{ goal'stack = (Unify value'l value'r) :| goals
         -- just return a new state with stack and env changed
         settle proc{ query'vars = query'vars' } goals'
 
+
+-- | Find the first predicate with the same name and arity as the call,
+-- with its position in the base.
+look'for :: Struct -> [Predicate] -> Int -> Maybe (Predicate, Int)
+look'for _ [] _ = Nothing
+-- a fact with the same name and arity
+look'for f@Struct{ name, args } (fact@(Fact (Struct{ name = name', args = args' })) : base) pos
+  | name == name' && length args == length args' = Just (fact, pos)
+  | otherwise = look'for f base (pos + 1)
+-- | Struct :- Term
+-- a rule with the same name and arity
+look'for f@Struct{ name, args } (rule@(Struct{ name = name', args = args' } :- _) : base) pos
+  | name == name' && length args == length args' = Just (rule, pos)
+  | otherwise = look'for f base (pos + 1)
+
+
+-- | Remember the current goal stack in case the match we just took
+-- leads nowhere - but only if another matching predicate exists
+-- further down the base.
+cause'backtracking :: Struct -> [Predicate] -> Int -> NonEmpty Goal -> Map.Map String Term -> [(NonEmpty Goal, Int, Map.Map String Term)] -> [(NonEmpty Goal, Int, Map.Map String Term)]
+cause'backtracking f base position goal'stack q'vars backtracking'stack
+  = case look'for f (drop position base) position of
+      Nothing -> backtracking'stack
+      Just (_, future'position) ->
+        let backtracking'record = (goal'stack, future'position, q'vars)
+        in  backtracking'record : backtracking'stack
 
 -- | Keep searching with a new goal list, or report a solution when none
 -- remain. This is the only place an emptied goal stack turns into a
@@ -134,7 +138,7 @@ resume Stalled{ base'stalled = base
 rename'all :: [Term] -> Int -> (Int, [Term])
 rename'all patterns counter = (counter', patterns')
   where
-    ((counter', mapping), patterns') = mapAccumL rename'val (counter, Map.empty) patterns
+    ((counter', _mapping), patterns') = mapAccumL rename'val (counter, Map.empty) patterns
 
 
 rename'val :: (Int, Map.Map String String) -> Term -> ((Int, Map.Map String String), Term)
@@ -171,8 +175,9 @@ rename'goal state (Call (Struct{ name, args }))
   = let (state', args') = mapAccumL rename'val state args
     in  (state', Call (Struct{ name, args = args' }))
 rename'goal state (Unify val'l val'r)
-  = let (state', [val'l', val'r']) = mapAccumL rename'val state [val'l, val'r]
-    in  (state', Unify val'l' val'r')
+  = let (state', val'l') = rename'val state val'l
+        (state'', val'r') = rename'val state' val'r
+    in  (state'', Unify val'l' val'r')
 
 
 -- | Unification in the style of Martelli and Montanari (see the write-up).
@@ -202,7 +207,7 @@ unify ( Compound Struct{ name = name'a, args = args'a }
 {-  ELIMINATE + OCCURS  -}
 unify (Var a, value) goals query'vars
   | (Var a) == value = Just (goals, query'vars) -- DELETE (both are variables)
-  | occurs a value = Nothing                    -- OCCURS CHECK (the one on the right is not a variable so I can do the check!)
+  | occurs a value = Nothing                    -- OCCURS CHECK
   | otherwise = Just (substituted'goals, substituted'query'vars)
   where
     substituted'goals = map (subst'goal (a, value)) goals
@@ -238,6 +243,6 @@ unify _ _ _ = Nothing   -- CONFLICT (for atoms and structs)
 -- corresponding unification is rejected instead.
 occurs :: String -> Term -> Bool
 occurs var'name (Var name) = var'name == name
-occurs var'name (Atom _) = False
+occurs _ (Atom _) = False
 occurs var'name (Compound Struct{ args }) = any (occurs var'name) args
-occurs var'name Wildcard = False
+occurs _ Wildcard = False

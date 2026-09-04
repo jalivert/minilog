@@ -26,6 +26,7 @@ library
     hs-source-dirs:     src
     default-language:   Haskell2010
     default-extensions: NamedFieldPuns ImportQualifiedPost BangPatterns
+    ghc-options:        -Wall
     build-depends:
         array,
         base >=4.19.0.0,

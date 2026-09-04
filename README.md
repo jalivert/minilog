@@ -3,7 +3,7 @@
 [![Haskell CI](https://github.com/jalivert/minilog/actions/workflows/haskell.yml/badge.svg)](https://github.com/jalivert/minilog/actions/workflows/haskell.yml)
 
 Minilog is a very small programming language implementation.
-It's goal is to capture the essence of logic programming.
+Its goal is to capture the essence of logic programming.
 
 > For the implementation write up see: [the write up](./WRITEUP.md).
 
@@ -88,7 +88,7 @@ And here is an example of a valid query:
 The implementation is just a complement of the [write up](./WRITEUP.md).
 The goal of this project is to offer an introductory level almost tutorial-like description of an implementation of a simple abstract machine for a logic language.
 
-The design of the implementation is not aming to represent a practical implementation of a logic programming language.
+The design of the implementation is not aiming to represent a practical implementation of a logic programming language.
 It should not be considered more than an initial exposition to the ideas behind concepts like
 unification, proof search that happens during the evaluation and a backtracking in such a proof search.
 
@@ -105,7 +105,7 @@ The goal of the project is not to be a rigorous introduction into the matter! At
 
 2) You can use the knowledge base in the repository, modify it, or use your own. It is loaded into the repl using a command `:load <path to the file>` like `:load factorial.pl`.
 
-3) You write Prolog-like query and hit enter.
+3) You write Prolog-like query (ending with `.`) and hit enter.
 
 4) When presented with a result, you either write `:next` and hit enter (to backtrack) or you write `:done` and hit enter to conclude the computation.
 

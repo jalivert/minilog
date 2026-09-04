@@ -610,6 +610,14 @@ The algorithm above omits two small details. It does not concern itself with the
 The unification algorithm takes two arguments and either succeeds or fails.
 If it succeeds, it produces a substitution/mapping from variables to terms and a stack of new goals.
 
+Note that there is no binding environment and no trail here, unlike in
+a real Prolog implementation: every time a variable is bound, the
+substitution is applied eagerly to all the goals that are still waiting
+(and to the recorded query variables). That is O(goals × bindings) work
+per binding, which is hopelessly naive as an implementation technique -
+but it keeps unification a visible rewriting process, which is the
+whole pedagogical point of this project.
+
 The following is the algorithm for the unification:
 
 ```

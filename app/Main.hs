@@ -5,6 +5,7 @@ import Data.List ( intercalate )
 import Data.List.Extra ( trim )
 import Data.List.NonEmpty ( NonEmpty(..) )
 import Data.List.NonEmpty qualified as NonEmpty
+import Data.Maybe ( fromMaybe )
 
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -37,6 +38,12 @@ start'query base goals = Processing
     q'vars = [(name, Var name) | name <- free'names]
 
 
+-- | Like `getLine`, but a closed stdin (Ctrl-D) yields `Nothing`
+-- instead of throwing.
+try'line :: IO (Maybe String)
+try'line = either (const Nothing) Just <$> (try getLine :: IO (Either IOException String))
+
+
 -- | Read a knowledge base file strictly: the content is fully forced
 -- before the handle is closed, and any I/O failure is raised to the
 -- caller (the REPL reports it instead of crashing).
@@ -51,7 +58,7 @@ read'base'file path = do
 
 main :: IO ()
 main = do
-  putStrLn "Minolog - implementation of simple logic programming language."
+  putStrLn "Minilog - implementation of simple logic programming language."
   repl []
   putStrLn "Bye!"
 
@@ -62,7 +69,8 @@ repl :: [Predicate] -> IO ()
 repl base = do
   putStr "?- "
   hFlush stdout
-  str <- getLine
+  -- Ctrl-D quits, like :q.
+  str <- fromMaybe ":q" <$> try'line
   case str of
     ":q" -> return ()
     ":Q" -> return ()
@@ -74,9 +82,10 @@ repl base = do
           repl base
         Right file'content ->
           case parse'base file'content of
-            Left (err, col) -> do
-              let padding = take (3 + col - 1) $! repeat ' '
-              putStrLn $! padding ++ "^"
+            -- No caret here: the error is on some line of a file that was
+            -- never echoed, so it would point at nothing. The message
+            -- itself carries the line number.
+            Left (err, _col) -> do
               putStrLn err
               repl base
             Right new'base -> repl new'base
@@ -88,7 +97,7 @@ repl base = do
     _ ->
       case parse'query str of
         Left (err, col) -> do
-          let padding = take (3 + col - 1) $! repeat ' '
+          let padding = replicate (3 + col - 1) ' '
           putStrLn $! padding ++ "^"
           putStrLn err
           repl base
@@ -122,7 +131,8 @@ try'to'prove proc = case step proc of
         repl (base'stalled stalled)
       Just proc' -> do
         print'result q'vars
-        user'input <- getLine
+        -- Ctrl-D ends the query like :done (the next prompt quits).
+        user'input <- fromMaybe ":done" <$> try'line
         case user'input of
           ":done" -> do
             putStrLn "."
