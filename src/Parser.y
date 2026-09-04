@@ -18,7 +18,7 @@ import Term
 
 
 %name parseBase Base
-%name parseBody Body 
+%name parseBody Body
 
 %tokentype { Token }
 %monad { Lexer }
@@ -45,6 +45,7 @@ import Term
 
 Base          ::  { [Predicate] }
               :   Predicates                { $1 }
+              |                             { [] }
 
 
 Predicates    ::  { [Predicate] }
@@ -53,8 +54,10 @@ Predicates    ::  { [Predicate] }
 
 
 Predicate     ::  { Predicate }
-              :   Struct '.'               { Fact $1 }
-              |   Struct ':-' Body         { $1 :- $3 }
+              :   ATOM '.'                  { Fact (bare'struct $1) }
+              |   ATOM ':-' Body            { bare'struct $1 :- $3 }
+              |   Struct '.'                { Fact $1 }
+              |   Struct ':-' Body          { $1 :- $3 }
 
 
 Body          ::  { [Goal] }
@@ -82,7 +85,8 @@ Goals         ::  { [Goal] }
 
 
 Goal          ::  { Goal }
-              :   Struct                    { Call $1 }
+              :   ATOM                      { Call (bare'struct $1) }
+              |   Struct                    { Call $1 }
               |   Term '=' Term             { Unify $1 $3 }
 
 {
@@ -93,6 +97,10 @@ parse'base source = mapRight fst $! eval'parser parseBase source
 
 parse'query :: String -> Either (String, Int) [Goal]
 parse'query source = mapRight fst $! eval'parser parseBody source
+
+
+bare'struct :: String -> Struct
+bare'struct name = Struct{ name, args = [] }
 
 
 parseError _ = do

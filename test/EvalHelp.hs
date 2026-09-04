@@ -42,12 +42,7 @@ mkState base goals =
 
 -- | Parse a knowledge base source, crashing on failure (a parse failure
 -- here is a bug in the test itself, not in the code under test).
--- The empty source denotes the empty base: the grammar itself has no
--- production for it (see the 'rejects the empty input' parser test), so
--- the helper maps it explicitly instead of working around it at every
--- call site.
 mustBase :: String -> [Predicate]
-mustBase "" = []
 mustBase src = case parse'base src of
   Left (err, _) -> error ("mustBase: " ++ err)
   Right base -> base

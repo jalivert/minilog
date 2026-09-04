@@ -36,6 +36,8 @@ In Minilog you have:
 
 - Facts
 
+  `raining.`
+
   `plus(z, N, N).`
 
 - Rules

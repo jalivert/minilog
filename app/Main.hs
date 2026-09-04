@@ -1,12 +1,13 @@
 module Main where
 
+import Control.Exception ( IOException, displayException, evaluate, try )
 import Data.List ( intercalate )
 import Data.List.Extra ( trim )
 
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 
-import System.IO ( hFlush, stdout, openFile, IOMode(ReadMode), hGetContents )
+import System.IO ( hFlush, stdout, openFile, IOMode(ReadMode), hGetContents, hClose )
 
 
 import Term ( Term(..), Struct(..), Predicate(..), Goal(..) )
@@ -41,6 +42,15 @@ set'goal goals state = state{ query'vars = Map.fromList q'vars
     q'vars = zip free'names free'vars
 
 
+read'base'file :: FilePath -> IO String
+read'base'file path = do
+  file'handle <- openFile path ReadMode
+  file'content <- hGetContents file'handle
+  _ <- evaluate (length file'content)
+  hClose file'handle
+  return file'content
+
+
 load'base :: [Predicate] -> State -> State
 load'base base state = state{ base = base
                             , query'vars = Map.empty
@@ -66,17 +76,21 @@ repl old'state = do
     ":q" -> return ()
     ":Q" -> return ()
     ':' : 'l' : 'o' : 'a' : 'd' : file'path -> do
-      file'handle <- openFile (trim file'path) ReadMode
-      file'content <- hGetContents file'handle
-      case parse'base file'content of
-        Left (err, col) -> do
-          let padding = take (3 + col - 1) $! repeat ' '
-          putStrLn $! padding ++ "^"
-          putStrLn err
+      load'result <- try (read'base'file (trim file'path)) :: IO (Either IOException String)
+      case load'result of
+        Left err -> do
+          putStrLn ("Could not load `" ++ trim file'path ++ "': " ++ displayException err)
           repl old'state
-        Right new'base -> do
-          let new'state = load'base new'base old'state
-          repl new'state
+        Right file'content ->
+          case parse'base file'content of
+            Left (err, col) -> do
+              let padding = take (3 + col - 1) $! repeat ' '
+              putStrLn $! padding ++ "^"
+              putStrLn err
+              repl old'state
+            Right new'base -> do
+              let new'state = load'base new'base old'state
+              repl new'state
 
     ':' : _ -> do
       putStrLn "I don't know this command, sorry."

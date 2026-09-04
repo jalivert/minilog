@@ -62,6 +62,11 @@ spec = do
       let st = mkState (mustBase "p(a).") (mustQuery "p(a).")
       in step st `shouldSatisfy` isSearching
 
+    it "is Succeeded at once for a zero-arity fact" $
+      -- No unification goals remain, so there is nothing to search.
+      let st = mkState (mustBase "raining.") (mustQuery "raining.")
+      in step st `shouldSatisfy` isSucceeded
+
   describe "facts" $ do
     it "proves a ground fact" $
       solutionsOf "small(mouse)." "small(mouse)."
@@ -186,6 +191,35 @@ spec = do
             Just (Var _) -> return ()
             other -> fail ("expected B to stay free, got: " ++ show other)
         _ -> fail ("expected exactly one solution, got: " ++ show sols)
+
+  describe "zero-arity structs" $ do
+    it "proves a bare fact" $
+      solutionsOf "raining." "raining."
+        `shouldBe` ([Map.empty], True)
+
+    it "refutes an absent bare fact" $
+      solutionsOf "raining." "sunny."
+        `shouldBe` ([], True)
+
+    it "proves through a rule with bare atoms" $
+      solutionsOf "sunny. raining :- sunny." "raining."
+        `shouldBe` ([Map.empty], True)
+
+    it "fails a bare rule when its body fails" $
+      solutionsOf "raining :- sunny." "raining."
+        `shouldBe` ([], True)
+
+    it "conjoins bare atoms" $
+      solutionsOf "sunny. warm. nice :- sunny, warm." "nice."
+        `shouldBe` ([Map.empty], True)
+
+    it "distinguishes zero arity from other arities" $ do
+      solutionsOf "p(a)." "p." `shouldBe` ([], True)
+      solutionsOf "p." "p(a)." `shouldBe` ([], True)
+
+    it "queries an empty base and fails" $
+      solutionsOf "" "p(a)."
+        `shouldBe` ([], True)
 
   describe "natural numbers (natural.pl)" $ do
     it "proves a ground numeral" $

@@ -50,6 +50,14 @@ spec = do
       lexAll "% a comment\nfoo"
         `shouldBe` Right [Token.Atom "foo", Token.EOF]
 
+    it "skips a comment at end of input without a newline" $
+      lexAll "foo % trailing comment"
+        `shouldBe` Right [Token.Atom "foo", Token.EOF]
+
+    it "skips a lone comment without a newline" $
+      lexAll "% just a comment"
+        `shouldBe` Right [Token.EOF]
+
   describe "lexical errors" $ do
     it "rejects digits" $
       lexAll "123" `shouldSatisfy` isLeft

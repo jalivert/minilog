@@ -35,6 +35,7 @@ instance Show Predicate where
 
 
 instance Show Struct where
+  show Struct{ name, args = [] } = name
   show Struct{ name, args } = name ++ "(" ++ intercalate ", " (map show args) ++ ")"
 
 

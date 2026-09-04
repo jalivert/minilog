@@ -30,6 +30,14 @@ spec = do
       show Struct{ name = "plus", args = [Atom "z", Var "N", Var "N"] }
         `shouldBe` "plus(z, N, N)"
 
+    it "prints a zero-arity struct as a bare name" $
+      show Struct{ name = "raining", args = [] }
+        `shouldBe` "raining"
+
+    it "prints a zero-arity fact without parentheses" $
+      show (Fact Struct{ name = "raining", args = [] })
+        `shouldBe` "raining."
+
   describe "Show Goal" $ do
     it "prints calls like structs" $
       show (Call Struct{ name = "p", args = [Var "X"] })

@@ -29,7 +29,7 @@ minilog :-
 
 $space+                 ;
 
-"%".*\n                 ;
+"%".*                   ;
 
 ","                     { \_ -> token Token.Comma }
 
@@ -64,11 +64,11 @@ read'token = do
 
     AlexError inp' ->
       throwError ("Lexical error on line " ++ (show $! ai'line'no inp') ++ " and column " ++ (show $! ai'col'no inp'), ai'col'no inp')
-    
+
     AlexSkip inp' _ -> do
       put s{ lexer'input = inp' }
       read'token
-    
+
     AlexToken inp' n act -> do
       let (Input{ ai'input = buf }) = lexer'input s
       put s{ lexer'input = inp' }
@@ -135,7 +135,7 @@ initial'state :: String -> Lexer'State
 initial'state s = Lexer'State
   { lexer'input       = Input
                         { ai'line'no    = 1
-                        , ai'col'no     = 1 
+                        , ai'col'no     = 1
                         , ai'last'char  = '\n'
                         , ai'input      = s } }
 

@@ -54,9 +54,12 @@ step state@State{ base
                               , position = 0  -- the current goal will never ever be tried again (in this goal'stack anyway)
                               , counter = counter' }
 
-        in  Searching new'state
+        -- A zero-arity fact leaves no unification goals behind, so the
+        -- new goal stack can already be empty; route through `succeed`
+        -- so that case is reported as `Succeeded`, not skipped over.
+        in  succeed new'state
 
-      Just (Struct{ args = patterns } :- body, the'position) -> 
+      Just (Struct{ args = patterns } :- body, the'position) ->
         let (counter', patterns', body') = rename'both patterns body counter
             head'goals = map (uncurry Unify) (zip args patterns')
             new'goal'stack = head'goals ++ body' ++ goal'stack
@@ -68,7 +71,7 @@ step state@State{ base
                               , position = 0  -- the current goal will never ever be tried again
                               , counter = counter' }
 
-        in  Searching new'state
+        in  succeed new'state
 
   where look'for :: Struct -> [Predicate] -> Int -> Maybe (Predicate, Int)
         look'for _ [] _ = Nothing

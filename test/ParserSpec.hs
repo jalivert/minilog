@@ -57,12 +57,59 @@ spec = do
       src <- readFile "natural.pl"
       parse'base src `shouldSatisfy` isRight
 
-  describe "parse'base errors" $ do
-    it "rejects the empty input" $
-      parse'base "" `shouldSatisfy` isLeft
+  describe "empty bases" $ do
+    it "parses the empty input as the empty base" $
+      parse'base "" `shouldBe` Right []
 
-    it "rejects a bare atom (only structs form predicates)" $
-      parse'base "foo." `shouldSatisfy` isLeft
+    it "parses whitespace-only input as the empty base" $
+      parse'base "  \n\t " `shouldBe` Right []
+
+    it "parses a comment-only file as the empty base" $
+      parse'base "% nothing here\n" `shouldBe` Right []
+
+    it "parses a trailing comment without a newline" $
+      parse'base "nat(z). % done"
+        `shouldBe` Right [Fact Struct{ name = "nat", args = [Atom "z"] }]
+
+    it "parses a comment-only file without a trailing newline" $
+      parse'base "% nothing here" `shouldBe` Right []
+
+  describe "zero-arity structs" $ do
+    it "parses a bare atom as a fact" $
+      parse'base "raining."
+        `shouldBe` Right [Fact Struct{ name = "raining", args = [] }]
+
+    it "parses a rule with a bare atom head" $
+      parse'base "raining :- sunny."
+        `shouldBe` Right
+          [ Struct{ name = "raining", args = [] }
+              :- [Call Struct{ name = "sunny", args = [] }] ]
+
+    it "parses bare atoms in rule bodies" $
+      parse'base "p :- q, r."
+        `shouldBe` Right
+          [ Struct{ name = "p", args = [] }
+              :- [ Call Struct{ name = "q", args = [] }
+                 , Call Struct{ name = "r", args = [] } ] ]
+
+    it "parses a bare atom query" $
+      parse'query "raining."
+        `shouldBe` Right [Call Struct{ name = "raining", args = [] }]
+
+    it "still parses atoms as plain terms inside argument lists" $
+      parse'query "p(raining)."
+        `shouldBe` Right [Call Struct{ name = "p", args = [Atom "raining"] }]
+
+    it "still parses unification against a bare atom" $
+      parse'query "raining = sunny."
+        `shouldBe` Right [Unify (Atom "raining") (Atom "sunny")]
+
+    it "rejects empty parentheses, as in Prolog" $
+      parse'base "raining()." `shouldSatisfy` isLeft
+
+  describe "parse'base errors" $ do
+    it "rejects a lone period" $
+      parse'base "." `shouldSatisfy` isLeft
 
     it "rejects a fact missing its period" $
       parse'base "nat(z)" `shouldSatisfy` isLeft
